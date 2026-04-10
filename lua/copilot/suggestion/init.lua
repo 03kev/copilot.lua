@@ -595,6 +595,52 @@ function M.prev()
   end, ctx)
 end
 
+local function feedkeys(keys, mode)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), mode or "i", true)
+end
+
+local function longest_prefix_suffix_overlap(left_text, new_text)
+  local max = math.min(#left_text, #new_text)
+  for k = max, 1, -1 do
+    if left_text:sub(-k) == new_text:sub(1, k) then
+      return k
+    end
+  end
+  return 0
+end
+
+local function accept_in_insert_mode(new_text, range)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local line = cursor[1] - 1
+  local col = cursor[2]
+
+  local current_line = vim.api.nvim_get_current_line()
+  local left_text = current_line:sub(1, col)
+
+  -- Rimuovi da new_text l'eventuale prefisso già scritto dall'utente
+  local overlap = longest_prefix_suffix_overlap(left_text, new_text)
+  if overlap > 0 then
+    new_text = new_text:sub(overlap + 1)
+  end
+
+  local right_delete_count = 0
+  if range["end"].line == line and range["end"].character > col then
+    right_delete_count = range["end"].character - col
+  end
+
+  vim.g.__copilot_accept_text = new_text
+
+  local recall
+  if new_text:find("\n", 1, true) then
+    recall = "<C-R><C-O>=g:__copilot_accept_text<CR>"
+  else
+    recall = "<C-R><C-R>=g:__copilot_accept_text<CR>"
+  end
+
+  local keys = string.rep("<Del>", right_delete_count) .. recall .. "<End>"
+  feedkeys(keys, "i")
+end
+
 ---@param modifier? (fun(suggestion: copilot_get_completions_data_completion): copilot_get_completions_data_completion)
 function M.accept(modifier)
   local ctx = get_ctx()
@@ -677,11 +723,12 @@ function M.accept(modifier)
       newText = newText .. "\n"
     end
 
-    vim.lsp.util.apply_text_edits({ { range = range, newText = newText } }, bufnr, encoding)
+    -- vim.lsp.util.apply_text_edits({ { range = range, newText = newText } }, bufnr, encoding)
+    accept_in_insert_mode(newText, range)
 
     -- Position cursor at the end of the last inserted line
     local new_cursor_line = range["start"].line + #lines
-    vim.api.nvim_win_set_cursor(0, { new_cursor_line, last_col })
+    -- vim.api.nvim_win_set_cursor(0, { new_cursor_line, last_col })
 
     if accepted_partial then
       suggestion.partial_text = nil
